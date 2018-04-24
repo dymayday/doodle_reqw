@@ -1,0 +1,12 @@
+[package]
+name = "doodle_reqwest"
+version = "0.1.0"
+authors = ["meidhy <meidhy.demagny@gmail.com>"]
+
+[dependencies]
+failure = ""
+reqwest = ""
+select = ""
+regex = ""
+# crossbeam = ""
+threadpool = ""
