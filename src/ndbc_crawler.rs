@@ -80,7 +80,7 @@ impl<'a> NdbcFileCrawler<'a> {
     pub fn crawl_file_list_threadpool(&'a mut self) -> Result<&'a mut NdbcFileCrawler, Error> {
         let dir_list: Vec<String> = self.get_directory_list()
             .expect("Fail to gather the remote directory list.");
-        let catalog_url: &str = self.catalog_url.clone();
+        let catalog_url: String = self.catalog_url.to_owned();
 
         let n_workers = 16;
         let n_jobs = dir_list.len();
@@ -90,8 +90,11 @@ impl<'a> NdbcFileCrawler<'a> {
 
         for station_catalog_url in dir_list {
             let tx = tx.clone();
-            tx.send(NdbcFileCrawler::gather_file_list(&catalog_url, &station_catalog_url).unwrap())
-                .unwrap();
+            let catalog_url: String = catalog_url.clone();
+            pool.execute(move || {
+                tx.send(NdbcFileCrawler::gather_file_list(&catalog_url, &station_catalog_url).unwrap())
+                    .unwrap();
+                    });
         }
 
         drop(tx);
