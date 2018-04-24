@@ -1,8 +1,8 @@
+extern crate crossbeam;
 extern crate failure;
 extern crate regex;
 extern crate reqwest;
 extern crate select;
-// extern crate crossbeam;
 extern crate threadpool;
 
 use select::document::Document;
@@ -137,7 +137,9 @@ fn run() -> Result<(), Error> {
     let mut ndbc_crawler: ndbc_crawler::NdbcFileCrawler = ndbc_crawler::NdbcFileCrawler::new();
     // let dir_list = ndbc_crawler.get_directory_list()?;
 
-    ndbc_crawler.crawl_file_list()?;
+    // ndbc_crawler.crawl_file_list()?;
+    // ndbc_crawler.crawl_file_list_crossbeam()?;
+    ndbc_crawler.crawl_file_list_threadpool()?;
 
     Ok(())
 }

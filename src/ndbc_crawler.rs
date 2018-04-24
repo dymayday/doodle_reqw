@@ -1,14 +1,14 @@
 use failure::Error;
 use regex::RegexSet;
 use reqwest;
-use select::node::Node;
 use select::document::Document;
+use select::node::Node;
 use select::predicate::Name;
 // use std::collections::HashMap;
 // use crossbeam;
+use crossbeam;
 use std::sync::mpsc::{channel, RecvError};
 use threadpool::ThreadPool;
-
 
 pub struct NdbcFileCrawler<'a> {
     root_server_url: &'a str,
@@ -25,40 +25,79 @@ impl<'a> NdbcFileCrawler<'a> {
             root_server_url: "https://dods.ndbc.noaa.gov/",
             root_out: "/mnt/glusterfs/datasets/Data/in-situ/ndbc_raw_rs/",
             catalog_url: "https://dods.ndbc.noaa.gov/thredds/catalog/data/stdmet/catalog.html",
+            // catalog_url: "https://dods.ndbc.noaa.gov/thredds/catalog/data/adcp/catalog.html",
             pattern_list: &[r".*/.h\d{4}.nc$"],
             file_list: vec![],
             // remote_local_hashmap: HashMap::new(),
         }
     }
 
-    pub fn crawl_file_list(&'a mut self) -> Result<&'a mut NdbcFileCrawler, Error> {
-        // let file_list: Vec<String> = vec![];
-        let re = RegexSet::new(self.pattern_list).unwrap();
+    // pub fn _crawl_file_list(&'a mut self) -> Result<&'a mut NdbcFileCrawler, Error> {
+    //     // let file_list: Vec<String> = vec![];
+    //     let re = RegexSet::new(self.pattern_list).unwrap();
 
-        let file_list: Vec<String> = {
-            let mut file_list: Vec<String> = vec![];
-            let dir_list: Vec<String> = self.get_directory_list()
-                .expect("Fail to gather the remote directory list.");
+    //     let file_list: Vec<String> = {
+    //         let mut file_list: Vec<String> = vec![];
+    //         let dir_list: Vec<String> = self.get_directory_list()
+    //             .expect("Fail to gather the remote directory list.");
 
-            println!(">> dir_list with {} elems.", dir_list.len());
+    //         println!(">> dir_list with {} elems.", dir_list.len());
 
-            let pool = ThreadPool::new(4);    
-            let (tx, rx) = channel();
+    //         for station_catalog_url in dir_list {
+    //             // self.gather_file_list(station_catalog_url)?;
+    //             file_list.extend(self.gather_file_list(&station_catalog_url)?);
+    //         }
+    //     file_list
+    //     };
+
+    //     self.file_list = file_list;
+
+    //     Ok(self)
+    // }
+
+    pub fn crawl_file_list_crossbeam(&'a mut self) -> Result<&'a mut NdbcFileCrawler, Error> {
+        let dir_list: Vec<String> = self.get_directory_list()
+            .expect("Fail to gather the remote directory list.");
+        let catalog_url: &str = self.catalog_url.clone();
+
+        // for station_catalog_url in dir_list {
+        //         self.gather_file_list(&station_catalog_url)?;
+        //     }
+
+        crossbeam::scope(|scope| {
             for station_catalog_url in dir_list {
-                let tx = tx.clone();
-                pool.execute( || {
-                    let tmp_file_list: Vec<String> = self.gather_file_list(&station_catalog_url.clone()).unwrap();
-                    tx.send(tmp_file_list).expect("Could not send data!");
+                scope.spawn(move || {
+                    let file_list =
+                        NdbcFileCrawler::gather_file_list(&catalog_url, &station_catalog_url)
+                            .expect("Fail to gather a file list.");
                 });
             }
-            
+        });
 
-            for station_catalog_url in dir_list {
-                // self.gather_file_list(station_catalog_url)?;
-                file_list.extend(self.gather_file_list(&station_catalog_url)?);
-            }
-        file_list
-        };
+        Ok(self)
+    }
+
+    pub fn crawl_file_list_threadpool(&'a mut self) -> Result<&'a mut NdbcFileCrawler, Error> {
+        let dir_list: Vec<String> = self.get_directory_list()
+            .expect("Fail to gather the remote directory list.");
+        let catalog_url: &str = self.catalog_url.clone();
+
+        let n_workers = 16;
+        let n_jobs = dir_list.len();
+        let pool = ThreadPool::new(n_workers);
+
+        let (tx, rx) = channel();
+
+        for station_catalog_url in dir_list {
+            let tx = tx.clone();
+            tx.send(NdbcFileCrawler::gather_file_list(&catalog_url, &station_catalog_url).unwrap())
+                .unwrap();
+        }
+
+        drop(tx);
+        for t in rx.iter() {
+            println!("{} files", t.len());
+        }
 
         Ok(self)
     }
@@ -95,7 +134,8 @@ impl<'a> NdbcFileCrawler<'a> {
                 .expect("Cannot gather station's catalog href");
 
             if NdbcFileCrawler::is_remote_dir(&station_id, &station_href) {
-                let url_station_catalog: String = self.catalog_url.replace("catalog.html", &station_href);
+                let url_station_catalog: String =
+                    self.catalog_url.replace("catalog.html", &station_href);
                 dir_list.push(url_station_catalog.clone());
 
                 println!(
@@ -106,13 +146,14 @@ impl<'a> NdbcFileCrawler<'a> {
             }
         }
 
-
         Ok(dir_list)
     }
 
-
-    fn gather_file_list(&self, station_catalog_url: &str) -> Result<Vec<String>, Error> {
-        println!("In gather_file_list", );
+    fn gather_file_list(
+        catalog_url: &str,
+        station_catalog_url: &str,
+    ) -> Result<Vec<String>, Error> {
+        println!("In gather_file_list",);
         let mut file_url_list: Vec<String> = vec![];
 
         let body = reqwest::get(station_catalog_url)?.text()?;
@@ -121,7 +162,7 @@ impl<'a> NdbcFileCrawler<'a> {
         for (i, node) in document.find(Name("a")).enumerate() {
             let (station_id, station_href) = NdbcFileCrawler::get_station_info(node);
             if station_id.ends_with(".nc") && !station_id.contains("h9999") {
-                let url_file_station = self.catalog_url
+                let url_file_station = catalog_url
                     .replace("catalog.html", &station_id)
                     .replace("/catalog/", "/fileServer/");
 
@@ -133,6 +174,4 @@ impl<'a> NdbcFileCrawler<'a> {
 
         Ok(file_url_list)
     }
-
-
 }
