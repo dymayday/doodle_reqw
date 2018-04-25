@@ -1,5 +1,4 @@
 use failure::Error;
-use regex::RegexSet;
 use reqwest;
 use select::document::Document;
 use select::node::Node;
@@ -7,7 +6,7 @@ use select::predicate::Name;
 // use std::collections::HashMap;
 // use crossbeam;
 use crossbeam;
-use std::sync::mpsc::{channel, RecvError};
+use std::sync::mpsc::channel;
 use threadpool::ThreadPool;
 
 pub struct NdbcFileCrawler<'a> {
@@ -15,7 +14,7 @@ pub struct NdbcFileCrawler<'a> {
     root_out: &'a str,
     catalog_url: &'a str,
     pattern_list: &'a [&'a str],
-    file_list: Vec<String>,
+    pub file_list: Vec<String>,
     // remote_local_hashmap: HashMap<String, String>,
 }
 
@@ -82,7 +81,9 @@ impl<'a> NdbcFileCrawler<'a> {
             .expect("Fail to gather the remote directory list.");
         let catalog_url: String = self.catalog_url.to_owned();
 
-        let n_workers = 16;
+        let mut fpl: Vec<String> = Vec::new();
+
+        let n_workers = 32;
         let n_jobs = dir_list.len();
         let pool = ThreadPool::new(n_workers);
 
@@ -92,16 +93,19 @@ impl<'a> NdbcFileCrawler<'a> {
             let tx = tx.clone();
             let catalog_url: String = catalog_url.clone();
             pool.execute(move || {
-                tx.send(NdbcFileCrawler::gather_file_list(&catalog_url, &station_catalog_url).unwrap())
-                    .unwrap();
-                    });
+                tx.send(
+                    NdbcFileCrawler::gather_file_list(&catalog_url, &station_catalog_url).unwrap(),
+                ).unwrap();
+            });
         }
 
         drop(tx);
         for t in rx.iter() {
-            println!("{} files", t.len());
+            // println!("{} files", t.len());
+            fpl.extend(t)
         }
 
+        self.file_list = fpl;
         Ok(self)
     }
 
@@ -156,7 +160,7 @@ impl<'a> NdbcFileCrawler<'a> {
         catalog_url: &str,
         station_catalog_url: &str,
     ) -> Result<Vec<String>, Error> {
-        println!("In gather_file_list",);
+        // println!("In gather_file_list",);
         let mut file_url_list: Vec<String> = vec![];
 
         let body = reqwest::get(station_catalog_url)?.text()?;
@@ -169,11 +173,11 @@ impl<'a> NdbcFileCrawler<'a> {
                     .replace("catalog.html", &station_id)
                     .replace("/catalog/", "/fileServer/");
 
-                println!("\t{:>4} : {}", i, url_file_station);
+                // println!("\t{:>4} : {}", i, url_file_station);
                 file_url_list.push(url_file_station.to_owned())
             }
         }
-        println!("");
+        // println!("");
 
         Ok(file_url_list)
     }
