@@ -19,6 +19,7 @@ use std::sync::mpsc::channel;
 use std::sync::Arc;
 use threadpool::ThreadPool;
 use std::collections::HashMap;
+use rayon::prelude::*;
 
 mod crawler;
 // mod ndbc_crawler;
@@ -40,110 +41,9 @@ fn get_station_info(node: select::node::Node) -> (String, &str) {
     (station_id, station_href)
 }
 
-fn get_file_list(catalog_url: &str) -> Result<Vec<String>, Error> {
-    let mut file_url_list: Vec<String> = vec![];
-
-    let body = reqwest::get(catalog_url)?.text()?;
-    let document = Document::from(body.as_str());
-
-    for (i, node) in document.find(Name("a")).enumerate() {
-        let (station_id, station_href) = get_station_info(node);
-        if station_id.ends_with(".nc") && !station_id.contains("h9999") {
-            let url_file_station = catalog_url
-                .replace("catalog.html", &station_id)
-                .replace("/catalog/", "/fileServer/");
-            // println!(
-            //     "\t{:>4} : {:>6} {:>20}  =>  {}",
-            //     i, station_id, station_href, url_file_station
-            // );
-            println!("\t{:>4} : {}", i, url_file_station);
-        }
-    }
-    println!("");
-
-    Ok(file_url_list)
-}
-
-fn run_old() -> Result<(), Error> {
-    let root_file_url =
-        "https://dods.ndbc.noaa.gov/thredds/fileServer/data/stdmet/46237/46237h2007.nc";
-    let _file_url = "https://dods.ndbc.noaa.gov/thredds/fileServer/data/stdmet/46237/46237h2007.nc";
-    let url_file_template = "https://dods.ndbc.noaa.gov/thredds/fileServer/data/stdmet/{}/{}";
-
-    let root_url = "https://dods.ndbc.noaa.gov/thredds/catalog/data/stdmet/";
-    let catalog_url = "https://dods.ndbc.noaa.gov/thredds/catalog/data/stdmet/catalog.html";
-    // let url: &str = "";
-    let body = reqwest::get(catalog_url)?.text()?;
-
-    let document = Document::from(body.as_str());
-
-    let mut href_vec: Vec<String> = vec![];
-
-    for (i, node) in document.find(Name("a")).enumerate() {
-        let station_id: String = node.text();
-        let station_href: &str = node.attr("href")
-            .expect("Cannot gather station's catalog href");
-
-        if filter_catalog(&station_id, &station_href) {
-            let url_station_catalog: String = format!("{}{}", root_url, station_href);
-            href_vec.push(url_station_catalog.clone());
-
-            println!(
-                "{:>4} : {:>6} {:>20}  =>  {}",
-                i, station_id, station_href, url_station_catalog
-            );
-            get_file_list(&url_station_catalog);
-        }
-    }
-    println!("");
-
-    Ok(())
-}
-
-fn get_single_file(url: &str, root_out: &str) -> Result<(), Error> {
-    let fp_out: &str = Path::new(url).file_name().unwrap().to_str().unwrap();
-    let fp_out = Path::new(&root_out)
-        .join(fp_out)
-        .to_string_lossy()
-        .to_owned()
-        .to_string();
-
-    let mut response = reqwest::get(url)?;
-    println!("{:#?}", response);
-
-    println!("{:#?}", response.url().path_segments().unwrap());
-
-    let mut dest = {
-        // extract target filename from URL
-        let fname = response
-            .url()
-            .path_segments()
-            .and_then(|segments| segments.last())
-            .and_then(|name| if name.is_empty() { None } else { Some(name) })
-            .unwrap_or("tmp.bin");
-
-        println!("file to download: '{}'", fname);
-        // let fname = tmpfile::name;
-        // println!("will be located under: '{:?}'", fname);
-        // create file with given name inside the temp dir
-        // File::create(fname)?
-        let fp_out = Path::new(&root_out)
-            .join(fname)
-            .to_string_lossy()
-            .to_owned()
-            .to_string();
-        println!("will be located under: '{:?}'", fp_out);
-        &mut BufWriter::new(File::create(&fp_out)?)
-    };
-    // data is copied into the target file
-    ::std::io::copy(&mut response, &mut dest)?;
-
-    Ok(())
-}
-
 fn run() -> Result<(), Error> {
     let root_url: &str = "https://dods.ndbc.noaa.gov/thredds/catalog/data/";
-    let fileserver_root_url: &str = "https://dods.ndbc.noaa.gov/thredds/fileServer/";
+    let fileserver_root_url: &str = "https://dods.ndbc.noaa.gov/thredds/fileServer/data/";
     let catalog_url: &str = "https://dods.ndbc.noaa.gov/thredds/catalog/data/stdmet/catalog.html";
     let catalog_ext: &str = ".html";
     let nc_ext: &str = ".nc";
@@ -163,6 +63,8 @@ fn run() -> Result<(), Error> {
         fpl.len(),
         catalog_ext,
     );
+
+    let n_jobs = fpl.len();
 
     let arc_catalog_url = Arc::new(catalog_url);
 
@@ -198,6 +100,7 @@ fn run() -> Result<(), Error> {
 
 
                 nc_fpl
+                // ()
             }).expect("Fail to send nc crawler.")
         });
     }
@@ -206,7 +109,7 @@ fn run() -> Result<(), Error> {
     for t in rx.iter() {
         println!("{:>4} files downloaded.", t.len());
     }
-
+    // rx.iter().take(n_jobs).collect::<()>();
     Ok(())
 }
 

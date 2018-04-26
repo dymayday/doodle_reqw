@@ -39,13 +39,6 @@ impl Crawler {
     }
 
     fn get_document(url: &str) -> Result<Document, Error> {
-        // Ok(Document::from(
-        //     reqwest::get(url)
-        //         .expect(&format!("Fail to request url: {}", url))
-        //         .text()?
-        //         .as_str(),
-        // ))
-
         Ok(Document::from_read(
             reqwest::get(url).expect(&format!("Fail to request url: {}", url)),
         )?)
@@ -53,8 +46,6 @@ impl Crawler {
 
     /// List a directory
     pub fn list_file_by_ext<'a>(self, url: &'a str, ext: &'a str) -> Result<Vec<String>, Error> {
-        // let mut dir_list: Vec<String> = Vec::new();
-
         let document: Document = Crawler::get_document(url)?;
 
         let dir_list = document
@@ -78,9 +69,9 @@ impl Crawler {
                 &mut response,
                 &mut BufWriter::new(File::create(&file_out)
                     .expect(&format!("Fail to create local file {}", &file_out)))
-                );
-
-        });
+                ).expect(&format!("Fail to download {}", &url));
+            ()
+        }).collect::<()>();
         
         Ok(())
     }
